@@ -3,10 +3,10 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import redis.clients.jedis.Jedis;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.lang.reflect.Array;
+import java.util.*;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 /**
  * Created by geoffrey on 27/09/2016.
@@ -14,7 +14,20 @@ import static org.junit.Assert.assertTrue;
 public class ArticleStoreTest {
 
 
+    /**
+     * The global Jedis connection to some Redis server
+     */
     private static Jedis conn;
+
+    /**
+     * A λ stating if the first arg is superior or equal to the second one (formerly known as `≤` )
+     * λ2,1.true
+     * λ1,1.true
+     * λ1,2.false
+     */
+    private static Function2<Long, Long, Boolean> inferiorOrEqual
+            = (Long a, Long b) -> a.compareTo(b) >= 0;
+
 
     @BeforeClass
     public static void setup(){
@@ -52,6 +65,34 @@ public class ArticleStoreTest {
 
 
     @Test
+    public void everyLong(){
+
+        ArrayList<Long> evenColl = new ArrayList<Long>(){{
+            add(4L);
+            add(3L);
+            add(2L);
+            add(1L);
+        }};
+        ArrayList<Long> oddColl = new ArrayList<Long>(){{
+            add(5L);
+            add(4L);
+            add(3L);
+            add(2L);
+            add(1L);
+        }};
+        ArrayList<Long> badColl = new ArrayList<Long>(){{
+            add(3L);
+            add(4L);
+            add(2L);
+            add(1L);
+        }};
+        assertTrue(ArticleStoreTestCompanion.everyLong(inferiorOrEqual, evenColl));
+        assertTrue(ArticleStoreTestCompanion.everyLong(inferiorOrEqual, oddColl));
+        assertFalse(ArticleStoreTestCompanion.everyLong(inferiorOrEqual, badColl));
+    }
+
+
+    @Test
     public void getNLatests() throws Exception {
         ArticleStore as = new ArticleStore();
         List<Map<String,String>> list = as.getNLatests(conn, 100); // get the 100 latest articles
@@ -63,14 +104,7 @@ public class ArticleStoreTest {
                 .map(Long::parseLong)          // parse it as a Long
                 .forEach(timestampList::add);  // collect the results in timestampList
 
-
-        // A λ stating if the first arg is superior or equal to the second one (formerly known as `≥` )
-        // λ2,1.true
-        // λ1,1.true
-        // λ1,2.false
-        Function2<Long, Long, Boolean> superiorOrEqual = (Long a, Long b) -> a.compareTo(b) >= 0;
-
-        assertTrue(ArticleStoreTestCompanion.everyLong(superiorOrEqual, timestampList));
+        assertTrue(ArticleStoreTestCompanion.everyLong(inferiorOrEqual, timestampList));
     }
     @Test
 
@@ -85,16 +119,7 @@ public class ArticleStoreTest {
                 .map(Long::parseLong)       // parse it as a Long
                 .forEach(scoresList::add);  // collect the results in timestampList
 
-
-
-
-        // A λ stating if the first arg is superior or equal to the second one (formerly known as `≥` )
-        // λ2,1.true
-        // λ1,1.true
-        // λ1,2.false
-        Function2<Long, Long, Boolean> superiorOrEqual = (Long a, Long b) -> a.compareTo(b) >= 0;
-
-        assertTrue(ArticleStoreTestCompanion.everyLong(superiorOrEqual, scoresList));
+        assertTrue(ArticleStoreTestCompanion.everyLong(inferiorOrEqual, scoresList));
     }
 
     @Test
@@ -108,7 +133,4 @@ public class ArticleStoreTest {
 
         assertTrue(conn.sismember(categoryKey, articleKey));
     }
-
-
-
 }

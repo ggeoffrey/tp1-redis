@@ -13,7 +13,8 @@ public class ArticleStoreTestCompanion {
      */
     public static boolean everyLong(Function2<Long, Long, Boolean> predicate, ArrayList<Long> coll){
         boolean result = true;
-        for(int i = 0; i < coll.size() - 1; i++){
+        final int size = coll.size() - 1;
+        for (int i = 0; i < size; i++) {
             result &= predicate.apply(coll.get(i), coll.get(i + 1));
             if (!result) break;
         }
