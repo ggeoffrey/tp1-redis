@@ -4,10 +4,11 @@ import redis.clients.jedis.Response;
 import redis.clients.jedis.Transaction;
 
 import java.io.IOException;
-import java.util.*;
-import java.util.function.Function;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Created by geoffrey on 26/09/2016.
@@ -36,6 +37,15 @@ public class ArticleStore {
             default:        expireTime = 60*60*24*7;    break;
         }
         return expireTime;
+    }
+
+    private static int counter = -1;
+    public static String gensym(String prefix){
+        counter++;
+        return prefix+"_"+counter;
+    }
+    public static String gensym(){
+        return gensym("AUTOGENSYM");
     }
 
     /**
@@ -86,7 +96,6 @@ public class ArticleStore {
         conn.zadd("scores", now + voteIncrement, articleKey);  // ordered by score
 
 
-
         final String votedSetKey = votersKey(articleID);
         conn.sadd(votedSetKey, user);  // set of users that voted for a particular article
         conn.expire(votedSetKey, expireTime);
@@ -106,6 +115,35 @@ public class ArticleStore {
             conn.sadd(categoryKey, articleKey);
         }
         return !alreadyIn;
+    }
+
+    public List<Map<String,String>> getAllByCategory(Jedis conn, String category) throws IOException{
+        ArrayList<Map<String,String>> resultColl = new ArrayList<>();
+
+        final String categoryKey = categoryKey(category);
+        final String tempKeyName = gensym();
+
+        conn.zinterstore(tempKeyName, categoryKey, "scores");
+
+        ArrayList<Response<Map<String,String>>> responseList = new ArrayList<>();
+
+        Pipeline p = conn.pipelined();
+
+        conn.zrevrange(tempKeyName, 0 , -1)
+                .stream()
+                .map(p::hgetAll)
+                .forEachOrdered(responseList::add);
+
+        p.sync();
+        p.close();
+
+        responseList.stream()
+                .map(Response::get)
+                .forEachOrdered(resultColl::add);
+
+        conn.del(tempKeyName);
+
+        return resultColl;
     }
 
     /**
