@@ -1,0 +1,285 @@
+% Created 2016-10-01 Sat 02:26
+\documentclass[article,a4paper,12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{fixltx2e}
+\usepackage{graphicx}
+\usepackage{grffile}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{textcomp}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\usepackage{fullpage}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\hypersetup{
+colorlinks,%
+citecolor=black,%
+filecolor=black,%
+linkcolor=black,%
+urlcolor=blue
+}
+\author{Geoffrey Gaillard}
+\date{\today}
+\title{}
+\hypersetup{
+ pdfauthor={Geoffrey Gaillard},
+ pdftitle={},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 24.5.1 (Org mode 8.3.5)},
+ pdflang={English}}
+\begin{document}
+
+\setcounter{tocdepth}{3}
+
+\title{TP1 -- Redis}
+\date{\today}
+
+\maketitle{}
+
+\rule{\linewidth}{0.5pt}
+
+
+
+\section{Installation}
+\label{sec:orgheadline2}
+
+Via Docker (testé également via une installation classique).
+
+
+\begin{verbatim}
+> docker run --name redis -p6379:6379 -d redis
+\end{verbatim}
+
+Lance un container nommé \texttt{redis} (\texttt{-{}-name}), basé sur l'image \texttt{redis},
+écoutant sur le port \texttt{6379 (-p)} de l'hote. Ce port est mappé au port 6379 du
+container \texttt{(:6379)}.
+
+\begin{verbatim}
+> docker exec -it redis redis-cli
+\end{verbatim}
+
+Lance une session interactive, executant le programme \texttt{redis-cli} sur le
+container nommé \texttt{redis}.
+
+
+\subsection{Test de connexion Jedis \(\rightarrow\) Redis}
+\label{sec:orgheadline1}
+
+\begin{verbatim}
+Jedis conn = new Jedis("localhost", 6379);
+conn.set("cle","valeur");
+String val = conn.get("cle");
+System.out.println(val);  // => "valeur"
+\end{verbatim}
+Tout est donc OK!
+
+
+\section{Choix des structures de données}
+\label{sec:orgheadline11}
+
+Les commandes données en exemple sont une illustration de la démarche
+uniquement. L'API Jedis fournit des outils plus efficaces pour manipuler les
+données, nottament par l'utilisation de hashmaps, du pipelining et des
+transactions. Ces outils sont utilisés dans l'implémentation.
+
+\subsection{Question a)}
+\label{sec:orgheadline3}
+
+La structure de données me parraissant la plus appropriée pour représenter un
+article est un hash se présentant sous cette forme:
+
+Pour \(id = 72\):
+
+\begin{verbatim}
+> HSET articles:72 timestamp     1380886601
+> HSET articles:72 lien          http://www.foo.org/articles/article/1
+> HSET articles:72 utilisateur   utilisateur:23
+> HSET articles:72 titre         Redis pour les nuls
+\end{verbatim}
+
+Pour simplifier l'accès au données, on y stocke aussi son score. Exemple avec un vote:
+
+\begin{verbatim}
+> HSET    articles:72  score     1380886601
+> HINCRBY articles:72  score 457
+\end{verbatim}
+
+Le nombre de votants pourra être obtenu soit
+\begin{itemize}
+\item par la cardinalité de l'ensemble des votants,
+\item par la formule \(\frac{score-timestamp}{457}\).
+\end{itemize}
+
+\subsection{Question b)}
+\label{sec:orgheadline4}
+
+Pour acceder aux articles, un sorted-set composé du timestamp et de la clef de
+l'article semble approprié (le timestamp est un entier, et donc ordonnable):
+
+\begin{verbatim}
+> ZADD timelineSet  1380886601  articles:72
+\end{verbatim}
+
+Pour acceder aux articles en fonction de leurs scores, le score étant un
+ordonnable (entier), un sorted-set semble aussi approprié:
+
+\begin{verbatim}
+> ZADD    scoresSet 1380886601  articles:72
+> ZINCRBY scores    457         articles:72
+\end{verbatim}
+
+\subsection{Question c)}
+\label{sec:orgheadline5}
+
+Afin de stocker les utilisateurs ayant votés pour un article donné, on utilise
+un set (un ensemble non ordonné\footnote{Ne pas confondre avec la commande
+\texttt{SET}}). Cet ensemble est associé à la clef \texttt{articles:<id>:voters}, où \(id\)
+est l'identifiant de l'article. Il n'est pas possible de stocker une
+collection dans un hash, on utilises donc une clef séparée.
+
+\begin{verbatim}
+> SADD articles:72:voters  user:1
+\end{verbatim}
+
+
+\subsection{Récupération des articles}
+\label{sec:orgheadline8}
+\subsubsection{Tous les articles}
+\label{sec:orgheadline6}
+
+Il faut procéder en deux temps pour récupérer tout les articles. D'abord il
+faut utiliser la commande \texttt{ZRANGE} sur la clef timeline. En effet, la clef
+timeline est associée à un sorted-set contenant toutes les clefs des articles. On
+préferera récupérer les articles du plus récent au plus ancien. Pour cela on
+utilise la commande:
+\begin{verbatim}
+> ZREVRANGE timeline 0 -1
+\end{verbatim}
+
+On obtient la liste des clefs des articles, triée du plus récent au plus
+ancien. Il faut ensuite récupérer chaque article par sa clef, on utilise pour
+cela la commande:
+\begin{verbatim}
+> HGETALL <clef>
+\end{verbatim}
+Ainsi pour un article ayant pour clef \texttt{articles:72} on utilisera:
+\begin{verbatim}
+> HGETALL articles:72
+\end{verbatim}
+
+L'API Jedis nous permet d'effectuer ces opérations en pipeline. Les
+instructions sont envoyées à Redis mais les réponses ne sont que des promises.
+Une fois l'ensemble des requêtes envoyées, la méthode \texttt{sync()} permets la
+réalisation de toutes les promises. Cette technique nous permets de récupérer
+tous les articles en une seule lecture.
+
+L'API Jedis implémente la commande \texttt{HGETALL} de façon à ce qu'elle retourne
+une \texttt{Map<String, String>}, nous évitant d'avoir à implémenter notre propre
+fonction \texttt{zipmap}\footnote{\url{https://clojuredocs.org/clojure.core/zipmap}}.
+
+
+\subsubsection{Les mieux notés}
+\label{sec:orgheadline7}
+
+La collection \texttt{scores} est aussi un sorted-set, triant les articles par leur
+nombre de votes, de manière croissante. La commande
+\begin{verbatim}
+> ZREVRANGE scores 0 n
+\end{verbatim}
+où \(n \in \mathbb{N}\), permets de récupérer les clefs correspondant aux \(n\)
+meilleurs articles.
+
+Il faut ensuite procéder de la même façon qu'au point précédent pour récupérer
+la liste des articles, c'est-à-dire récupérer chaque article grâce à la
+commande \texttt{HGETALL}. Il est également judicieux d'utiliser un pipeline pour
+éviter les aller et retours intempestifs entre le client java et le serveur
+Redis.
+
+\subsection{Vote}
+\label{sec:orgheadline9}
+Le vote sur un article correspond à un "like". C'est-à-dire que l'article
+gagne un point par vote. Pour chaque vote, son score est incrémenté de 457.
+Il faut également s'assurer qu'un utilisateur ne puisse pas voter deux fois.
+
+Grâce aux étapes précédentes, nous disposons des clefs:
+
+\begin{itemize}
+\item \texttt{articles:<id>:voters} (set)
+\item \texttt{articles:<id>:score}
+\item \texttt{articles:<id>:nbVotes}
+\item \texttt{scores} (sorted-set)
+\end{itemize}
+
+Il faut tester si l'utilisateur est déjà présent parmi les utisateurs ayant votés.
+
+\begin{verbatim}
+> SISMEMBER articles:<id>:voters user
+\end{verbatim}
+où \texttt{user} est la clef de l'utilisateur votant. La valeur de retour de
+\texttt{SISMEMBER} est dans l'ensemble \(\{0,1\}\) correspondant à un booléen.
+
+
+Si l'utilisateur n'y est pas, on peut l'ajouter en procédant ainsi:
+
+
+\begin{verbatim}
+> HINCRBY articles:<id>         score    457
+> ZINCRBY scores                457      articles:<id>
+> SADD    articles:<id>:voters  user
+\end{verbatim}
+
+
+\subsection{Gestion des catégories}
+\label{sec:orgheadline10}
+
+Afin de gérer les catégories correctement, il faut que l'on puisse trouver
+tous les articles d'une catégorie donnée, mais également trouvé toutes les
+catégories d'un article donné.
+
+Redis ne permets pas le stockage d'une collection dans un hash (les commandes
+\texttt{HSADD} et \texttt{HZADD}, entre autres, n'existent pas) il faut donc stocker ces
+informations via des clefs séparées.
+
+\begin{verbatim}
+> SADD category:java article:72
+\end{verbatim}
+permet d'ajouter l'article 72 à la catégorie \texttt{java}.
+
+\begin{verbatim}
+> SADD articles:72:categories category:java
+\end{verbatim}
+permet de garder un trace des catégories affectées à un article.
+
+Pour récupérer le score des articles d'une catégorie donnée, le plus efficace
+est d'utiliser la commmande
+\begin{verbatim}
+> ZINTERSTORE temp 2 category:<group> scores
+\end{verbatim}
+où
+\begin{itemize}
+\item \texttt{temp} est le nom d'une collection temporaire, dont le nom est possiblement
+généré et unique
+\item \texttt{group} est le nom de la catégorie d'articles (\texttt{java}, \texttt{python}, \texttt{R}),
+formant une clef désignant un ensemble de clefs d'articles,
+\item \texttt{scores} est le sorted-set des scores,
+\item \texttt{2} est le nombre d'ensembles participants à l'intersection.
+\end{itemize}
+
+On obtient dans \texttt{temp} l'ensemble des articles avec leurs scores faisant
+partie de la catégorie donnée.
+
+On peut alors obtenir les scores via la commande
+\begin{verbatim}
+> ZRANGE temp 0 -1 WITHSCORES
+\end{verbatim}
+
+ou en récupérant directement, via un pipeline et la commande \texttt{HGETALL},
+l'ensemble des données des articles.
+\end{document}

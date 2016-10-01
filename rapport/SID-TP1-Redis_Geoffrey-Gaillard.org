@@ -1,0 +1,244 @@
+#+LaTeX_CLASS: article
+#+LaTeX_CLASS_OPTIONS: [article,a4paper,12pt]
+#+OPTIONS: toc:nil
+
+#+LaTeX_HEADER: \usepackage{fullpage}
+#+LaTeX_HEADER: \usepackage[T1]{fontenc}
+#+LaTeX_HEADER: \usepackage{lmodern}
+
+#+LaTeX_HEADER: \hypersetup{
+#+LaTeX_HEADER:    colorlinks,%
+#+LaTeX_HEADER:    citecolor=black,%
+#+LaTeX_HEADER:    filecolor=black,%
+#+LaTeX_HEADER:    linkcolor=black,%
+#+LaTeX_HEADER:    urlcolor=blue
+#+LaTeX_HEADER: }
+
+#+LaTeX: \setcounter{tocdepth}{3}
+
+#+LaTeX: \title{TP1 -- Redis}
+#+LaTeX: \date{\today}
+
+#+LaTeX: \maketitle{}
+--------------------
+
+
+
+* Installation
+
+Via Docker (testé également via une installation classique).
+
+
+#+BEGIN_SRC bash
+> docker run --name redis -p6379:6379 -d redis
+#+END_SRC
+
+Lance un container nommé ~redis~ (~--name~), basé sur l'image ~redis~,
+écoutant sur le port ~6379 (-p)~ de l'hote. Ce port est mappé au port 6379 du
+container ~(:6379)~.
+
+#+BEGIN_SRC bash
+> docker exec -it redis redis-cli
+#+END_SRC
+
+Lance une session interactive, executant le programme ~redis-cli~ sur le
+container nommé ~redis~.
+
+
+** Test de connexion Jedis $\rightarrow$ Redis
+
+#+BEGIN_SRC java
+    Jedis conn = new Jedis("localhost", 6379);
+    conn.set("cle","valeur");
+    String val = conn.get("cle");
+    System.out.println(val);  // => "valeur"
+#+END_SRC
+Tout est donc OK!
+
+
+* Choix des structures de données
+
+Les commandes données en exemple sont une illustration de la démarche
+uniquement. L'API Jedis fournit des outils plus efficaces pour manipuler les
+données, nottament par l'utilisation de hashmaps, du pipelining et des
+transactions. Ces outils sont utilisés dans l'implémentation.
+
+** Question a)
+
+La structure de données me parraissant la plus appropriée pour représenter un
+article est un hash se présentant sous cette forme:
+
+Pour $id = 72$:
+
+#+BEGIN_SRC redis
+> HSET articles:72 timestamp     1380886601
+> HSET articles:72 lien          http://www.foo.org/articles/article/1
+> HSET articles:72 utilisateur   utilisateur:23
+> HSET articles:72 titre         Redis pour les nuls
+#+END_SRC
+
+Pour simplifier l'accès au données, on y stocke aussi son score. Exemple avec un vote:
+
+#+BEGIN_SRC redis
+> HSET    articles:72  score     1380886601
+> HINCRBY articles:72  score 457
+#+END_SRC
+
+Le nombre de votants pourra être obtenu soit
+- par la cardinalité de l'ensemble des votants (cet ensemble sera construit plus tard),
+- par la formule $\frac{score-timestamp}{457}$.
+
+** Question b)
+
+Pour acceder aux articles, un sorted-set composé du timestamp et de la clef de
+l'article semble approprié (le timestamp est un entier, et donc ordonnable):
+
+#+BEGIN_SRC redis
+> ZADD timelineSet  1380886601  articles:72
+#+END_SRC
+
+Pour acceder aux articles en fonction de leurs scores, le score étant un
+ordonnable (entier), un sorted-set semble aussi approprié:
+
+#+BEGIN_SRC redis
+> ZADD    scoresSet 1380886601  articles:72
+> ZINCRBY scores    457         articles:72
+#+END_SRC
+
+** Question c)
+
+Afin de stocker les utilisateurs ayant votés pour un article donné, on utilise
+un set (un ensemble non ordonné[fn:: Ne pas confondre avec la commande
+~SET~]). Cet ensemble est associé à la clef ~articles:<id>:voters~, où $id$
+est l'identifiant de l'article. Il n'est pas possible de stocker une
+collection dans un hash, on utilises donc une clef séparée.
+
+#+BEGIN_SRC redis
+> SADD articles:72:voters  user:1
+#+END_SRC
+
+
+** Récupération des articles
+*** Tous les articles
+
+Il faut procéder en deux temps pour récupérer tout les articles. D'abord il
+faut utiliser la commande ~ZRANGE~ sur la clef timeline. En effet, la clef
+timeline est associée à un sorted-set contenant toutes les clefs des articles. On
+préferera récupérer les articles du plus récent au plus ancien. Pour cela on
+utilise la commande:
+#+BEGIN_SRC redis
+> ZREVRANGE timeline 0 -1
+#+END_SRC
+
+On obtient la liste des clefs des articles, triée du plus récent au plus
+ancien. Il faut ensuite récupérer chaque article par sa clef, on utilise pour
+cela la commande:
+#+BEGIN_SRC redis
+> HGETALL <clef>
+#+END_SRC
+Ainsi pour un article ayant pour clef ~articles:72~ on utilisera:
+#+BEGIN_SRC redis
+> HGETALL articles:72
+#+END_SRC
+
+L'API Jedis nous permet d'effectuer ces opérations en pipeline. Les
+instructions sont envoyées à Redis mais les réponses ne sont que des promises.
+Une fois l'ensemble des requêtes envoyées, la méthode ~sync()~ permets la
+réalisation de toutes les promises. Cette technique nous permets de récupérer
+tous les articles en une seule lecture.
+
+L'API Jedis implémente la commande ~HGETALL~ de façon à ce qu'elle retourne
+une ~Map<String, String>~, nous évitant d'avoir à implémenter notre propre
+fonction ~zipmap~[fn::https://clojuredocs.org/clojure.core/zipmap].
+
+
+*** Les mieux notés
+
+La collection ~scores~ est aussi un sorted-set, triant les articles par leur
+nombre de votes, de manière croissante. La commande
+#+BEGIN_SRC redis
+> ZREVRANGE scores 0 n
+#+END_SRC
+où $n \in \mathbb{N}$, permets de récupérer les clefs correspondant aux $n$
+meilleurs articles.
+
+Il faut ensuite procéder de la même façon qu'au point précédent pour récupérer
+la liste des articles, c'est-à-dire récupérer chaque article grâce à la
+commande ~HGETALL~. Il est également judicieux d'utiliser un pipeline pour
+éviter les aller et retours intempestifs entre le client java et le serveur
+Redis.
+
+** Vote
+Le vote sur un article correspond à un "like". C'est-à-dire que l'article
+gagne un point par vote. Pour chaque vote, son score est incrémenté de 457.
+Il faut également s'assurer qu'un utilisateur ne puisse pas voter deux fois.
+
+Grâce aux étapes précédentes, nous disposons des clefs:
+
+- ~articles:<id>:voters~ (set)
+- ~articles:<id>:score~
+- ~articles:<id>:nbVotes~
+- ~scores~ (sorted-set)
+
+Il faut tester si l'utilisateur est déjà présent parmi les utisateurs ayant votés.
+
+#+BEGIN_SRC redis
+> SISMEMBER articles:<id>:voters user
+#+END_SRC
+où ~user~ est la clef de l'utilisateur votant. La valeur de retour de
+~SISMEMBER~ est dans l'ensemble $\{0,1\}$ correspondant à un booléen.
+
+
+Si l'utilisateur n'y est pas, on peut l'ajouter en procédant ainsi:
+
+
+#+BEGIN_SRC redis
+> HINCRBY articles:<id>         score    457
+> ZINCRBY scores                457      articles:<id>
+> SADD    articles:<id>:voters  user
+#+END_SRC
+
+
+** Gestion des catégories
+
+Afin de gérer les catégories correctement, il faut que l'on puisse trouver
+tous les articles d'une catégorie donnée, mais également trouvé toutes les
+catégories d'un article donné.
+
+Redis ne permets pas le stockage d'une collection dans un hash (les commandes
+~HSADD~ et ~HZADD~, entre autres, n'existent pas) il faut donc stocker ces
+informations via des clefs séparées.
+
+#+BEGIN_SRC redis
+> SADD category:java article:72
+#+END_SRC
+permet d'ajouter l'article 72 à la catégorie ~java~.
+
+#+BEGIN_SRC redis
+> SADD articles:72:categories category:java
+#+END_SRC
+permet de garder un trace des catégories affectées à un article.
+
+Pour récupérer le score des articles d'une catégorie donnée, le plus efficace
+est d'utiliser la commmande
+#+BEGIN_SRC redis
+> ZINTERSTORE temp 2 category:<group> scores
+#+END_SRC
+où
+- ~temp~ est le nom d'une collection temporaire, dont le nom est possiblement
+  généré et unique
+- ~group~ est le nom de la catégorie d'articles (~java~, ~python~, ~R~),
+  formant une clef désignant un ensemble de clefs d'articles,
+- ~scores~ est le sorted-set des scores,
+- ~2~ est le nombre d'ensembles participants à l'intersection.
+
+On obtient dans ~temp~ l'ensemble des articles avec leurs scores faisant
+partie de la catégorie donnée.
+
+On peut alors obtenir les scores via la commande
+#+BEGIN_SRC redis
+> ZRANGE temp 0 -1 WITHSCORES
+#+END_SRC
+
+ou en récupérant directement, via un pipeline et la commande ~HGETALL~,
+l'ensemble des données des articles.
