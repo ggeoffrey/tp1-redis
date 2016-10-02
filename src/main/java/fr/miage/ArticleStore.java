@@ -13,8 +13,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Created by geoffrey on 26/09/2016.
  * Create and read articles in a Redis cache.
+ * Created by geoffrey on 26/09/2016.
  */
 public class ArticleStore {
 
@@ -53,12 +53,22 @@ public class ArticleStore {
      * A counter used to generate unique string
      */
     private static int counter = -1;
+
+    /**
+     * Generate an always unique string
+     * @param prefix Some string to prepend
+     * @return a string formated as "prefix_some-number"
+     *
+     */
     public static String gensym(String prefix){
         counter++;
         return prefix+"_"+counter;
     }
 
-    // Default args
+    /**
+     * Default parameters for gensym.
+     * @return
+     */
     public static String gensym(){
         return gensym("AUTOGENSYM");
     }
@@ -202,7 +212,7 @@ public class ArticleStore {
     }
 
     /**
-     * Try to vote an an article.
+     * Try to vote on an article.
      * A user can vote only one time and cannot vote after the expiration time
      * @param conn
      * @param articleId  id of the desired article to vote for.
@@ -307,7 +317,4 @@ public class ArticleStore {
         return getNInZRevRange(conn, "scores", n);
     }
 
-    public List<Map<String, String>> getAll(Jedis conn) throws IOException{
-        return getNInZRevRange(conn, "timeline", -1);
-    }
 }

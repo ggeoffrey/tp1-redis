@@ -3,8 +3,8 @@ package fr.miage;
 import java.util.ArrayList;
 
 /**
- * Created by geoffrey on 27/09/2016.
  * Provide higher order functions to work on collections.
+ * Created by geoffrey on 27/09/2016.
  */
 public class ArticleStoreTestCompanion {
 

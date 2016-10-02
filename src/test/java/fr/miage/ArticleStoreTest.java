@@ -5,9 +5,14 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import redis.clients.jedis.Jedis;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -43,8 +48,19 @@ public class ArticleStoreTest {
      */
     @BeforeClass
     public static void setup(){
-        conn = new Jedis("localhost", 6379);
         articleStore = new ArticleStore();
+        
+        Properties properties = new Properties();
+        InputStream is = ArticleStore.class.getResourceAsStream("/redis.properties");
+        try {
+            properties.load(is);
+            String host = properties.getProperty("host");
+            int port = Integer.parseInt(properties.getProperty("port"));
+            conn = new Jedis(host,port);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
     }
 
     /**
