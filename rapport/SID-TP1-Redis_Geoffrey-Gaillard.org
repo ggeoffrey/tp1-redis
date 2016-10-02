@@ -41,7 +41,7 @@ container ~(:6379)~.
 > docker exec -it redis redis-cli
 #+END_SRC
 
-Lance une session interactive, executant le programme ~redis-cli~ sur le
+Lance une session interactive, exécutant le programme ~redis-cli~ sur le
 container nommé ~redis~.
 
 
@@ -60,12 +60,12 @@ Tout est donc OK!
 
 Les commandes données en exemple sont une illustration de la démarche
 uniquement. L'API Jedis fournit des outils plus efficaces pour manipuler les
-données, nottament par l'utilisation de hashmaps, du pipelining et des
+données, notamment par l'utilisation de hashmaps, du pipelining et des
 transactions. Ces outils sont utilisés dans l'implémentation.
 
 ** Question a)
 
-La structure de données me parraissant la plus appropriée pour représenter un
+La structure de données me paraissant la plus appropriée pour représenter un
 article est un hash se présentant sous cette forme:
 
 Pour $id = 72$:
@@ -77,7 +77,7 @@ Pour $id = 72$:
 > HSET articles:72 titre         Redis pour les nuls
 #+END_SRC
 
-Pour simplifier l'accès au données, on y stocke aussi son score. Exemple avec un vote:
+Pour simplifier l'accès aux données, on y stocke aussi son score. Exemple avec un vote:
 
 #+BEGIN_SRC redis
 > HSET    articles:72  score     1380886601
@@ -90,14 +90,14 @@ Le nombre de votants pourra être obtenu soit
 
 ** Question b)
 
-Pour acceder aux articles, un sorted-set composé du timestamp et de la clef de
+Pour accéder aux articles, un sorted-set composé du timestamp et de la clef de
 l'article semble approprié (le timestamp est un entier, et donc ordonnable):
 
 #+BEGIN_SRC redis
 > ZADD timelineSet  1380886601  articles:72
 #+END_SRC
 
-Pour acceder aux articles en fonction de leurs scores, le score étant un
+Pour accéder aux articles en fonction de leurs scores, le score étant un
 ordonnable (entier), un sorted-set semble aussi approprié:
 
 #+BEGIN_SRC redis
@@ -107,11 +107,11 @@ ordonnable (entier), un sorted-set semble aussi approprié:
 
 ** Question c)
 
-Afin de stocker les utilisateurs ayant votés pour un article donné, on utilise
+Afin de stocker les utilisateurs ayant voté pour un article donné, on utilise
 un set (un ensemble non ordonné[fn:: Ne pas confondre avec la commande
 ~SET~]). Cet ensemble est associé à la clef ~articles:<id>:voters~, où $id$
 est l'identifiant de l'article. Il n'est pas possible de stocker une
-collection dans un hash, on utilises donc une clef séparée.
+collection dans un hash, on utilise donc une clef séparée.
 
 #+BEGIN_SRC redis
 > SADD articles:72:voters  user:1
@@ -121,10 +121,10 @@ collection dans un hash, on utilises donc une clef séparée.
 ** Récupération des articles
 *** Tous les articles
 
-Il faut procéder en deux temps pour récupérer tout les articles. D'abord il
+Il faut procéder en deux temps pour récupérer tous les articles. D'abord, il
 faut utiliser la commande ~ZRANGE~ sur la clef timeline. En effet, la clef
-timeline est associée à un sorted-set contenant toutes les clefs des articles. On
-préferera récupérer les articles du plus récent au plus ancien. Pour cela on
+timeline est associée à un sorted-set contenant toutes les clefs des articles.
+On préférera récupérer les articles du plus récent au plus ancien. Pour cela on
 utilise la commande:
 #+BEGIN_SRC redis
 > ZREVRANGE timeline 0 -1
@@ -143,14 +143,13 @@ Ainsi pour un article ayant pour clef ~articles:72~ on utilisera:
 
 L'API Jedis nous permet d'effectuer ces opérations en pipeline. Les
 instructions sont envoyées à Redis mais les réponses ne sont que des promises.
-Une fois l'ensemble des requêtes envoyées, la méthode ~sync()~ permets la
-réalisation de toutes les promises. Cette technique nous permets de récupérer
+Une fois l'ensemble des requêtes envoyées, la méthode ~sync()~ permet la
+réalisation de toutes les promises. Cette technique nous permet de récupérer
 tous les articles en une seule lecture.
 
 L'API Jedis implémente la commande ~HGETALL~ de façon à ce qu'elle retourne
 une ~Map<String, String>~, nous évitant d'avoir à implémenter notre propre
 fonction ~zipmap~[fn::https://clojuredocs.org/clojure.core/zipmap].
-
 
 *** Les mieux notés
 
@@ -165,7 +164,7 @@ meilleurs articles.
 Il faut ensuite procéder de la même façon qu'au point précédent pour récupérer
 la liste des articles, c'est-à-dire récupérer chaque article grâce à la
 commande ~HGETALL~. Il est également judicieux d'utiliser un pipeline pour
-éviter les aller et retours intempestifs entre le client java et le serveur
+éviter les aller et retour intempestifs entre le client java et le serveur
 Redis.
 
 ** Vote
@@ -202,7 +201,7 @@ Si l'utilisateur n'y est pas, on peut l'ajouter en procédant ainsi:
 ** Gestion des catégories
 
 Afin de gérer les catégories correctement, il faut que l'on puisse trouver
-tous les articles d'une catégorie donnée, mais également trouvé toutes les
+tous les articles d'une catégorie donnée, mais également trouver toutes les
 catégories d'un article donné.
 
 Redis ne permets pas le stockage d'une collection dans un hash (les commandes
@@ -217,16 +216,16 @@ permet d'ajouter l'article 72 à la catégorie ~java~.
 #+BEGIN_SRC redis
 > SADD articles:72:categories category:java
 #+END_SRC
-permet de garder un trace des catégories affectées à un article.
+permet de garder une trace des catégories affectées à un article.
 
 Pour récupérer le score des articles d'une catégorie donnée, le plus efficace
-est d'utiliser la commmande
+est d'utiliser la commande
 #+BEGIN_SRC redis
 > ZINTERSTORE temp 2 category:<group> scores
 #+END_SRC
 où
 - ~temp~ est le nom d'une collection temporaire, dont le nom est possiblement
-  généré et unique
+  généré et unique,
 - ~group~ est le nom de la catégorie d'articles (~java~, ~python~, ~R~),
   formant une clef désignant un ensemble de clefs d'articles,
 - ~scores~ est le sorted-set des scores,
@@ -242,3 +241,26 @@ On peut alors obtenir les scores via la commande
 
 ou en récupérant directement, via un pipeline et la commande ~HGETALL~,
 l'ensemble des données des articles.
+
+** Implémentation
+
+L'implémentation est en Java 8 et disponible à l'adresse https://github.com/ggeoffrey/tp1-redis.
+L'hôte et le port sur lesquels se connecter peuvent êtres spécifiés dans ~config/redis.properties~.
+
+Assurez-vous de disposer d'Apache Maven, puis procédez comme ceci:
+#+BEGIN_SRC bash
+> git clone https://github.com/ggeoffrey/tp1-redis.git
+  # éditez éventuellement config/redis.properties
+> mvn clean test
+#+END_SRC
+
+Les sources sont composées d'une classe ArticleStore servant à manipuler les
+articles (création, sauvegarde, récupération), d'une classe ArticleStoreTest
+permettant d'effectuer les tests unitaires et d'autres classes utilitaires. Il
+n'y a pas de classe principale (Main).
+
+Pour obtenir la documentation, exécutez
+#+BEGIN_SRC bash
+> mvn javadoc:javadoc
+#+END_SRC
+et ouvrez le fichier ~target/site/apidocs/index.html~.
