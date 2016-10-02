@@ -29,7 +29,7 @@ public class ArticleStoreTest {
     private static ArticleStore articleStore;
 
     /**
-     * A λ stating if the first arg is superior or equal to the second one (formerly known as `≤` )
+     * A function stating if the first arg is superior or equal to the second one (formerly known as `≤` )
      * λ2,1.true
      * λ1,1.true
      * λ1,2.false
@@ -38,16 +38,23 @@ public class ArticleStoreTest {
             = (Long a, Long b) -> a.compareTo(b) >= 0;
 
 
+    /**
+     * Initialise the connection and the article store
+     */
     @BeforeClass
     public static void setup(){
         conn = new Jedis("localhost", 6379);
         articleStore = new ArticleStore();
     }
 
+    /**
+     * Close the connection
+     */
     @AfterClass
     public static void tearDown(){
         conn.close();
     }
+
 
     @Test
     public void addArticle() throws Exception {
